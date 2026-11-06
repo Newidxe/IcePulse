@@ -25,7 +25,7 @@ from telethon.errors import FloodWaitError, SlowModeWaitError, SessionPasswordNe
 import qrcode
 
 # Обновлении через GitHub
-CURRENT_VERSION = "1.0"
+CURRENT_VERSION = "1.1"
 VERSION_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/version.txt"
 SCRIPT_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/icepulse.py"
 
