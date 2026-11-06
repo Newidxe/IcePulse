@@ -29,7 +29,7 @@ IMPORT_DIR = "Import_Bases"
 if not os.path.exists(IMPORT_DIR):
     os.makedirs(IMPORT_DIR)
 
-CURRENT_VERSION = "1.1"
+CURRENT_VERSION = "1.2"
 VERSION_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/version.txt"
 SCRIPT_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/icepulse.py"
 
