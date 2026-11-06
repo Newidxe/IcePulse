@@ -109,14 +109,12 @@ def reset_local_data():
 def check_for_updates():
     try:
         print("[*] Проверка обновлений...")
-        # Берем текущую версию из базы клиента (по умолчанию 1.0)
         local_version = get_setting("current_version", "1.0")
         
         response = requests.get(VERSION_URL, timeout=3)
         if response.status_code == 200:
             latest_version = response.text.strip()
             
-            # Если версия на GitHub отличается от версии в базе клиента
             if latest_version != local_version:
                 print(f"\n[!] Вышла новая версия {latest_version}, загружаем обновление...")
                 
@@ -124,17 +122,14 @@ def check_for_updates():
                 if script_response.status_code == 200:
                     new_code = script_response.text
                     
-                    # Перезаписываем текущий файл
                     with open("icepulse.py", "w", encoding="utf-8") as f:
                         f.write(new_code)
                     
-                    # Сохраняем новую версию в базу данных клиента!
                     set_setting("current_version", latest_version)
                     
                     print("[+] Обновление успешно установлено! Быстрый перезапуск...\n")
                     time.sleep(1)
                     
-                    # Перезапускаем программу в текущем окне
                     subprocess.call([sys.executable] + sys.argv)
                     sys.exit(0)
             else:
@@ -213,7 +208,7 @@ def check_profile_online(email: str, pass_hash: str) -> tuple[bool, bool, str]:
             exp_str = data.get("expires_str", "")
             return True, True, f"{C_GREEN}АКТИВНА ({days} дн. {hours} ч. {mins} мин. | до {exp_str}){C_RESET}"
         else:
-            return True, False, f"{C_RED}НЕ АКТИВНА (Активируйте ключ в пункте [6]){C_RESET}"
+            return True, False, f"{C_RED}НЕ АКТИВНА (Активируйте ключ в пункте [7]){C_RESET}"
     except Exception:
         return True, False, f"{C_YELLOW}Нет связи с сервером лицензий (проверьте интернет){C_RESET}"
 
@@ -265,7 +260,6 @@ async def ensure_authenticated() -> tuple[str, str]:
 
         if choice == "0":
             raise SystemExit()
-
         elif choice == "3":
             if reset_local_data():
                 print(f"\n{C_GREEN}✅ Локальные данные и привязки успешно сброшены!{C_RESET}")
@@ -273,13 +267,11 @@ async def ensure_authenticated() -> tuple[str, str]:
                 print(f"\n{C_YELLOW}⚠️ Часть файлов занята процессами, но база пересоздана.{C_RESET}")
             await asyncio.sleep(1.5)
             continue
-
         elif choice == "1":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== ВХОД В ПРОФИЛЬ ICEPULSE ==={C_RESET}\n")
             email = (await ainput(f"Введите вашу почту (Email) {C_GRAY}[0 - Назад]{C_RESET}: ")).strip().lower()
             if email == "0": continue
-            
             password = (await ainput(f"Введите ваш пароль {C_GRAY}[0 - Назад]{C_RESET}: ")).strip()
             if password == "0": continue
 
@@ -301,13 +293,11 @@ async def ensure_authenticated() -> tuple[str, str]:
             else:
                 print(f"\n{msg}")
                 await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
-
         elif choice == "2":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== СОЗДАНИЕ ПРОФИЛЯ ICEPULSE ==={C_RESET}")
             email = (await ainput(f"Введите вашу почту {C_GRAY}[0 - Назад]{C_RESET}: ")).strip().lower()
             if email == "0": continue
-            
             password = (await ainput(f"Придумайте пароль (мин. 4 символа) {C_GRAY}[0 - Назад]{C_RESET}: ")).strip()
             if password == "0": continue
 
@@ -393,7 +383,7 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
                         file_to_send = ad_photo if (ad_photo and os.path.isfile(ad_photo)) else None
                         await client.send_message(entity=entity, message=ad_text, file=file_to_send, reply_to=topic_id)
 
-                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category}]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category} | Задержка: {delay_sec//60}мин]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
                 except SlowModeWaitError as e:
                     print(f"{C_GRAY}[{now_str}]{C_RESET} {C_YELLOW}[Медленный режим]{C_RESET} {chat_entity}: ждём {e.seconds} сек.")
                 except FloodWaitError as e:
@@ -454,11 +444,11 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         print(f"{C_BLUE}----------------------------------------------------------------------{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Запустить авторассылку IcePulse       {C_GRAY}| 🚀 Старт отправки сообщений{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / фото         {C_GRAY}| 📝 Что будем рассылать?{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и настроить категории   {C_GRAY}| 📂 Импорт баз из папки или вручную{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и категории (TXT/Руки)  {C_GRAY}| 📂 Импорт баз с разной задержкой{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов базы / Удалить чаты      {C_GRAY}| 📋 Управление добавленными чатами{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Массово изменить интервал рассылки    {C_GRAY}| ⏱️ Настройка общего таймера{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Управление категориями и таймерами    {C_GRAY}| ⏱️ Настроить задержку по категориям{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[6]{C_RESET} Активировать / продлить ключ IcePulse {C_GRAY}| 🔑 Управление подпиской{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Сменить аккаунт (Очистка сессии)      {C_GRAY}| 🔄 Выйти из текущего Telegram/профиля{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Сменить аккаунт (Очистка сессии)      {C_GRAY}| 🔄 Выйти из текущего профиля{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход из программы                    {C_GRAY}| ❌ Закрыть софт{C_RESET}")
         print(f"{C_ICE}{C_BOLD}======================================================================{C_RESET}")
 
@@ -467,7 +457,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         if choice == "6":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== АКТИВАЦИЯ КЛЮЧА ==={C_RESET}")
-            key_str = (await ainput(f"Введите ваш ключ {C_GRAY}[0 - Отмена]{C_RESET}: ")).strip()
+            key_str = (await ainput(f"Введите ваш ключ {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
             if key_str == "0": continue
             
             _, msg = await asyncio.to_thread(activate_key_online, email, pass_hash, key_str)
@@ -503,7 +493,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
                 continue
 
             clear_screen()
-            print(f"{C_ICE}ICEPULSE АКТИВЕН. Независимые таймеры запущены.{C_RESET}")
+            print(f"{C_ICE}ICEPULSE АКТИВЕН. Независимые таймеры по категориям запущены.{C_RESET}")
             print(f"{C_GRAY}Нажмите Enter для остановки рассылки.{C_RESET}\n")
             
             stop_event = asyncio.Event()
@@ -564,7 +554,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
                 txt_files = [f for f in os.listdir(IMPORT_DIR) if f.endswith('.txt')]
                 if not txt_files:
                     print(f"\n{C_YELLOW}[!] В папке '{IMPORT_DIR}' нет текстовых файлов.{C_RESET}")
-                    print(f"{C_GRAY}Закиньте туда .txt файлы с чатами (разделитель - пробел или Enter) и возвращайтесь.{C_RESET}")
+                    print(f"{C_GRAY}Закиньте туда .txt файлы с чатами и возвращайтесь.{C_RESET}")
                 else:
                     print(f"\n{C_ICE}📂 Доступные TXT базы в папке '{IMPORT_DIR}':{C_RESET}")
                     for i, file_name in enumerate(txt_files, 1):
@@ -584,17 +574,17 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
                         for item in items:
                             c, t = parse_single_target(item)
                             if c: targets_to_add.append((c, t))
-                        print(f"\n{C_GREEN}✅ База '{selected_file}' прочитана! Найдено корректных чатов: {len(targets_to_add)}{C_RESET}")
+                        print(f"\n{C_GREEN}✅ База '{selected_file}' прочитана! Найдено чатов: {len(targets_to_add)}{C_RESET}")
                     else:
                         print(f"\n{C_RED}[!] Неверный выбор.{C_RESET}")
             
             if targets_to_add:
-                print(f"\n{C_ICE}--- НАСТРОЙКА КАТЕГОРИИ ---{C_RESET}")
+                print(f"\n{C_ICE}--- НАСТРОЙКА КАТЕГОРИИ И ЗАДЕРЖКИ ---{C_RESET}")
                 cat = (await ainput(f"{C_BOLD}Введите название категории{C_RESET} {C_GRAY}(Enter - 'Основная', 0 - Отмена):{C_RESET} ")).strip()
                 if cat == "0": continue
                 if not cat: cat = "Основная"
                 
-                delay_m = (await ainput(f"{C_BOLD}Интервал рассылки в минутах{C_RESET} {C_GRAY}(Enter - 15 мин, 0 - Отмена):{C_RESET} ")).strip()
+                delay_m = (await ainput(f"{C_BOLD}Интервал рассылки для этой категории (в минутах){C_RESET} {C_GRAY}(Enter - 15 мин, 0 - Отмена):{C_RESET} ")).strip()
                 if delay_m == "0": continue
                 
                 delay_s = int(delay_m) * 60 if delay_m.isdigit() and int(delay_m) > 0 else 900
@@ -606,7 +596,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
                             (c, t, cat, delay_s)
                         )
                     conn.commit()
-                print(f"\n{C_GREEN}✅ Успешно добавлено {len(targets_to_add)} чат(ов) в категорию '{cat}'!{C_RESET}")
+                print(f"\n{C_GREEN}✅ Успешно добавлено {len(targets_to_add)} чат(ов) в категорию '{cat}' с задержкой {delay_m or 15} мин.!{C_RESET}")
             
             await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
 
@@ -621,7 +611,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             else:
                 for r_id, c_ent, t_id, cat, d_sec in rows:
                     t_str = f" (Ветка: {t_id})" if t_id else ""
-                    print(f"[{C_BOLD}ID: {r_id}{C_RESET}] {c_ent}{t_str} | Кат: {C_ICE}{cat}{C_RESET} | {d_sec//60} мин.")
+                    print(f"[{C_BOLD}ID: {r_id}{C_RESET}] {c_ent}{t_str} | Кат: {C_ICE}{cat}{C_RESET} | Задержка: {d_sec//60} мин.")
             
             print(f"\n{C_GRAY}Подсказка: Введите 'all' чтобы очистить всю базу разом.{C_RESET}")
             del_id = (await ainput(f"{C_BOLD}Введите ID для удаления{C_RESET} {C_GRAY}(Enter или 0 - Назад):{C_RESET} ")).strip().lower()
@@ -643,19 +633,39 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         elif choice == "5":
             clear_screen()
-            print(f"{C_ICE}{C_BOLD}=== МАССОВОЕ ИЗМЕНЕНИЕ ИНТЕРВАЛА ==={C_RESET}\n")
-            mins = (await ainput(f"{C_BOLD}Введите новый интервал (в минутах) для ВСЕХ чатов в базе {C_GRAY}[0 - Отмена]{C_RESET}:{C_BOLD}\n-> {C_RESET}")).strip()
+            print(f"{C_ICE}{C_BOLD}=== УПРАВЛЕНИЕ КАТЕГОРИЯМИ И ТАЙМЕРАМИ ==={C_RESET}\n")
             
-            if mins == "0": continue
+            with sqlite3.connect(DB_FILE) as conn:
+                categories = conn.cursor().execute("SELECT DISTINCT category, delay_sec FROM targets").fetchall()
             
-            if mins.isdigit() and int(mins) > 0:
-                with sqlite3.connect(DB_FILE) as conn:
-                    conn.cursor().execute("UPDATE targets SET delay_sec = ?", (int(mins) * 60,))
-                    conn.commit()
-                print(f"\n{C_GREEN}✅ Интервал всех чатов в базе успешно обновлен на {mins} мин.!{C_RESET}")
+            if not categories:
+                print(f"{C_YELLOW}В базе пока нет ни одной категории с чатами.{C_RESET}")
             else:
-                print(f"\n{C_RED}[!] Отмена. Нужно ввести целое число.{C_RESET}")
-            await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
+                print(f" {C_BOLD}Текущие категории в базе:{C_RESET}")
+                for i, (cat, d_sec) in enumerate(categories, 1):
+                    print(f" [{i}] Категория: {C_ICE}{cat}{C_RESET} | Задержка: {C_BOLD}{d_sec//60} мин.{C_RESET}")
+                
+                print(f"\n{C_GRAY}Вы можете изменить задержку для конкретной категории.{C_RESET}")
+                cat_choice = (await ainput(f"Введите номер категории для изменения {C_GRAY}[0 - Назад]:{C_RESET} ")).strip()
+                if cat_choice == "0" or not cat_choice: continue
+                
+                if cat_choice.isdigit() and 1 <= int(cat_choice) <= len(categories):
+                    target_cat = categories[int(cat_choice)-1][0]
+                    new_m = (await ainput(f"Введите новый интервал в минутах для категории '{target_cat}' {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
+                    if new_m == "0": continue
+                    
+                    if new_m.isdigit() and int(new_m) > 0:
+                        new_sec = int(new_m) * 60
+                        with sqlite3.connect(DB_FILE) as conn:
+                            conn.cursor().execute("UPDATE targets SET delay_sec = ? WHERE category = ?", (new_sec, target_cat))
+                            conn.commit()
+                        print(f"\n{C_GREEN}✅ Задержка для категории '{target_cat}' успешно обновлена на {new_m} мин.!{C_RESET}")
+                    else:
+                        print(f"\n{C_RED}[!] Неверное значение минут.{C_RESET}")
+                else:
+                    print(f"\n{C_RED}[!] Неверный выбор категории.{C_RESET}")
+            
+            await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
 
 async def main():
     email, pass_hash = await ensure_authenticated()
@@ -735,7 +745,6 @@ if __name__ == "__main__":
     if os.name == "nt":
         os.system("title IcePulse - Telegram Auto-Poster")
         
-    # Инициализация базы данных и проверка обновлений до запуска асинхронного меню
     init_db()
     check_for_updates()
     
