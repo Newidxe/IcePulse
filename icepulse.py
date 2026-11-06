@@ -18,10 +18,52 @@ import re
 import sqlite3
 import uuid
 import requests
+import time
 from datetime import datetime
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SlowModeWaitError, SessionPasswordNeededError
 import qrcode
+
+# Обновлении через GitHub
+CURRENT_VERSION = "1.0"
+VERSION_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/version.txt"
+SCRIPT_URL = "https://raw.githubusercontent.com/Newidxe/IcePulse/main/icepulse.py"
+
+def check_for_updates():
+    try:
+        print("[*] Проверка обновлений...")
+        response = requests.get(VERSION_URL, timeout=3)
+        if response.status_code == 200:
+            latest_version = response.text.strip()
+            if latest_version != CURRENT_VERSION:
+                print(f"\n[!] Вышла новая версия {latest_version}, обновляем скрипт...")
+                
+                script_response = requests.get(SCRIPT_URL, timeout=10)
+                if script_response.status_code == 200:
+                    new_code = script_response.text
+                    temp_file = "icepulse_temp.py"
+                    with open(temp_file, "w", encoding="utf-8") as f:
+                        f.write(new_code)
+                    
+                    bat_content = f"""@echo off
+timeout /t 1 /nobreak > nul
+move /y {temp_file} icepulse.py > nul
+start python icepulse.py
+del "%~f0"
+"""
+                    with open("updater.bat", "w", encoding="utf-8") as bat_file:
+                        bat_file.write(bat_content)
+                    
+                    print("[+] Обновление успешно установлено! Перезапуск...\n")
+                    subprocess.Popen("updater.bat", shell=True)
+                    sys.exit(0)
+            else:
+                print("[+] У вас установлена актуальная версия IcePulse.")
+    except Exception:
+        print("[*] Автообновление пропущено (оффлайн режим).")
+
+if __name__ == "__main__":
+    check_for_updates()
 
 os.system("")
 if os.name == "nt":
@@ -87,8 +129,19 @@ def init_db():
         c.execute("""CREATE TABLE IF NOT EXISTS targets (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         chat_entity TEXT,
-                        topic_id INTEGER
+                        topic_id INTEGER,
+                        category TEXT DEFAULT 'Основная',
+                        delay_sec INTEGER DEFAULT 900
                     )""")
+        
+        try:
+            c.execute("ALTER TABLE targets ADD COLUMN category TEXT DEFAULT 'Основная'")
+        except Exception:
+            pass
+        try:
+            c.execute("ALTER TABLE targets ADD COLUMN delay_sec INTEGER DEFAULT 900")
+        except Exception:
+            pass
         conn.commit()
 
 
@@ -108,7 +161,6 @@ def set_setting(key: str, value: str):
 
 
 def reset_local_data():
-    """Безопасный сброс локальной базы данных и сессий"""
     try:
         if os.path.exists(DB_FILE):
             try:
@@ -290,30 +342,25 @@ async def ensure_authenticated() -> tuple[str, str]:
                 await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
 
-def parse_target_input(raw: str) -> tuple[str | None, int | None]:
+def parse_single_target(raw: str) -> tuple[str | None, int | None]:
     raw = raw.strip()
     if not raw:
         return None, None
 
     m_priv = re.search(r"t\.me/c/(\d+)(?:/(\d+))?", raw)
     if m_priv:
-        chat_id = f"-100{m_priv.group(1)}"
-        topic_id = int(m_priv.group(2)) if m_priv.group(2) else None
-        return chat_id, topic_id
+        return f"-100{m_priv.group(1)}", int(m_priv.group(2)) if m_priv.group(2) else None
 
     m_pub = re.search(r"t\.me/([a-zA-Z0-9_]+)(?:/(\d+))?", raw)
     if m_pub:
-        chat_name = m_pub.group(1)
-        topic_id = int(m_pub.group(2)) if m_pub.group(2) else None
-        return chat_name, topic_id
+        return m_pub.group(1), int(m_pub.group(2)) if m_pub.group(2) else None
 
-    parts = raw.split()
-    chat_name = parts[0].lstrip("@")
-    topic_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
-    return chat_name, topic_id
+    return raw.lstrip("@"), None
 
 
 async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email: str, pass_hash: str):
+    next_run_times = {}
+
     while not stop_event.is_set():
         login_ok, is_active, status_msg = await asyncio.to_thread(check_profile_online, email, pass_hash)
         if (not login_ok or not is_active) and "Нет связи" not in status_msg:
@@ -335,52 +382,52 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
                 break
 
         with sqlite3.connect(DB_FILE) as conn:
-            targets = conn.cursor().execute("SELECT id, chat_entity, topic_id FROM targets").fetchall()
+            targets = conn.cursor().execute("SELECT id, chat_entity, topic_id, category, delay_sec FROM targets").fetchall()
 
-        for _, chat_entity, topic_id in targets:
+        sent_in_this_pass = False
+        now_ts = time.time()
+
+        for r_id, chat_entity, topic_id, category, delay_sec in targets:
             if stop_event.is_set():
                 break
 
-            now_str = datetime.now().strftime("%H:%M:%S")
-            entity = int(chat_entity) if chat_entity.lstrip("-").isdigit() else chat_entity
-            topic_label = f" (Ветка: {topic_id})" if topic_id else ""
+            if now_ts >= next_run_times.get(r_id, 0):
+                now_str = datetime.now().strftime("%H:%M:%S")
+                entity = int(chat_entity) if chat_entity.lstrip("-").isdigit() else chat_entity
+                topic_label = f" (Ветка: {topic_id})" if topic_id else ""
 
-            try:
-                if ad_mode == "saved" and saved_msg_obj:
-                    await client.send_message(entity=entity, message=saved_msg_obj, reply_to=topic_id)
-                else:
-                    file_to_send = ad_photo if (ad_photo and os.path.isfile(ad_photo)) else None
-                    await client.send_message(entity=entity, message=ad_text, file=file_to_send, reply_to=topic_id)
-
-                print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[IcePulse]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
-            except SlowModeWaitError as e:
-                print(f"{C_GRAY}[{now_str}]{C_RESET} {C_YELLOW}[Медленный режим]{C_RESET} {chat_entity}: ждём {e.seconds} сек.")
-            except FloodWaitError as e:
-                print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[!] FloodWait: пауза {e.seconds} сек.{C_RESET}")
                 try:
-                    await asyncio.wait_for(stop_event.wait(), timeout=e.seconds + 5)
+                    if ad_mode == "saved" and saved_msg_obj:
+                        await client.send_message(entity=entity, message=saved_msg_obj, reply_to=topic_id)
+                    else:
+                        file_to_send = ad_photo if (ad_photo and os.path.isfile(ad_photo)) else None
+                        await client.send_message(entity=entity, message=ad_text, file=file_to_send, reply_to=topic_id)
+
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category}]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
+                except SlowModeWaitError as e:
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_YELLOW}[Медленный режим]{C_RESET} {chat_entity}: ждём {e.seconds} сек.")
+                except FloodWaitError as e:
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[!] FloodWait: общая пауза {e.seconds} сек.{C_RESET}")
+                    try:
+                        await asyncio.wait_for(stop_event.wait(), timeout=e.seconds + 5)
+                    except asyncio.TimeoutError:
+                        pass
+                except Exception as e:
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[-] Ошибка в {chat_entity}: {e}{C_RESET}")
+
+                next_run_times[r_id] = time.time() + delay_sec + random.randint(10, 25)
+                sent_in_this_pass = True
+
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=random.randint(4, 8))
                 except asyncio.TimeoutError:
                     pass
-            except Exception as e:
-                print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[-] Ошибка в {chat_entity}: {e}{C_RESET}")
 
+        if not sent_in_this_pass and not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=random.randint(4, 8))
+                await asyncio.wait_for(stop_event.wait(), timeout=5)
             except asyncio.TimeoutError:
                 pass
-
-        if stop_event.is_set():
-            break
-
-        interval = int(get_setting("interval", "900") or 900)
-        wait_time = interval + random.randint(10, 25)
-        now_str = datetime.now().strftime("%H:%M:%S")
-        print(f"{C_GRAY}[{now_str}] Цикл завершен. Следующий импульс через ~{wait_time // 60} мин.{C_RESET}")
-
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=wait_time)
-        except asyncio.TimeoutError:
-            pass
 
 
 def get_ad_summary() -> str:
@@ -407,7 +454,6 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         with sqlite3.connect(DB_FILE) as conn:
             chats_count = conn.cursor().execute("SELECT COUNT(*) FROM targets").fetchone()[0]
-        interval_min = int(get_setting("interval", "900") or 900) // 60
 
         print(f"{C_ICE}{C_BOLD}========================================================{C_RESET}")
         print(f"{C_ICE}{C_BOLD}        ICEPULSE | TELEGRAM AUTO-POSTER                 {C_RESET}")
@@ -418,13 +464,13 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         print(f" Лицензия:        {lic_status_str}")
         print(f" Рекламный пост:  {get_ad_summary()}")
         print(f" Чатов в базе:    {C_BOLD}{chats_count} шт.{C_RESET}")
-        print(f" Интервал:        {C_BOLD}каждые {interval_min} мин.{C_RESET}")
+        print(f" Интервалы:       {C_BOLD}Индивидуальные по категориям{C_RESET}")
         print(f"{C_BLUE}--------------------------------------------------------{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Запустить авторассылку IcePulse")
         print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / фото")
-        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чат или ветку (топик)")
-        print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов / Удалить чат")
-        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Изменить интервал (таймер)")
+        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и настроить категории (Вручную / TXT)")
+        print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов базы / Удалить чаты")
+        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Массово изменить интервал рассылки")
         print(f" {C_ICE}{C_BOLD}[6]{C_RESET} Активировать / продлить ключ IcePulse")
         print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Выйти из профиля")
         print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход из программы")
@@ -466,7 +512,9 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
                 continue
 
             clear_screen()
-            print(f"{C_ICE}ICEPULSE АКТИВЕН. Нажмите Enter для остановки.{C_RESET}\n")
+            print(f"{C_ICE}ICEPULSE АКТИВЕН. Независимые таймеры запущены.{C_RESET}")
+            print(f"{C_GRAY}Нажмите Enter для остановки рассылки.{C_RESET}\n")
+            
             stop_event = asyncio.Event()
             task = asyncio.create_task(mailing_loop(client, stop_event, email, pass_hash))
             await ainput()
@@ -500,23 +548,71 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         elif choice == "3":
             clear_screen()
-            raw_target = await ainput("Вставьте ссылку или @username чата: ")
-            chat_entity, topic_id = parse_target_input(raw_target)
-            if chat_entity:
+            print(f"{C_ICE}=== ДОБАВЛЕНИЕ ЧАТОВ ==={C_RESET}")
+            print(" [1] Добавить один чат / ветку вручную")
+            print(" [2] Загрузить базу чатов из .txt файла (Масс-импорт)\n")
+            sub = (await ainput("Ваш выбор (1-2): ")).strip()
+            
+            targets_to_add = []
+            if sub == "1":
+                raw = await ainput("\nВставьте ссылку или @username: ")
+                c, t = parse_single_target(raw)
+                if c: targets_to_add.append((c, t))
+            elif sub == "2":
+                print("\nФормат txt файла: ссылки или @username через пробел или с новой строки.")
+                filepath = await ainput("Укажите путь к .txt файлу (например, base.txt): ")
+                filepath = filepath.strip().strip('"').strip("'")
+                if os.path.exists(filepath):
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    items = re.split(r'[\s\n]+', content.strip())
+                    for item in items:
+                        c, t = parse_single_target(item)
+                        if c: targets_to_add.append((c, t))
+                    print(f"\n{C_GREEN}Найдено корректных чатов в файле: {len(targets_to_add)}{C_RESET}")
+                else:
+                    print(f"\n{C_RED}Файл не найден! Проверьте правильность пути.{C_RESET}")
+            
+            if targets_to_add:
+                cat = await ainput("\nВведите название категории (Enter = 'Основная'): ").strip()
+                if not cat: cat = "Основная"
+                
+                delay_m = await ainput("Интервал рассылки для этой категории чатов (в минутах): ").strip()
+                delay_s = int(delay_m) * 60 if delay_m.isdigit() and int(delay_m) > 0 else 900
+                
                 with sqlite3.connect(DB_FILE) as conn:
-                    conn.cursor().execute("INSERT INTO targets (chat_entity, topic_id) VALUES (?, ?)", (chat_entity, topic_id))
+                    for c, t in targets_to_add:
+                        conn.cursor().execute(
+                            "INSERT INTO targets (chat_entity, topic_id, category, delay_sec) VALUES (?, ?, ?, ?)", 
+                            (c, t, cat, delay_s)
+                        )
                     conn.commit()
-                print(f"\n{C_GREEN}Успешно добавлено!{C_RESET}")
+                print(f"\n{C_GREEN}✅ Успешно добавлено {len(targets_to_add)} чат(ов) в категорию '{cat}'!{C_RESET}")
+            
             await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
         elif choice == "4":
             clear_screen()
             with sqlite3.connect(DB_FILE) as conn:
-                rows = conn.cursor().execute("SELECT id, chat_entity, topic_id FROM targets").fetchall()
-            for r_id, c_ent, t_id in rows:
-                print(f"[ID: {r_id}] -> {c_ent} (Ветка: {t_id})")
-            del_id = (await ainput("\nID для удаления (или Enter): ")).strip()
-            if del_id.isdigit():
+                rows = conn.cursor().execute("SELECT id, chat_entity, topic_id, category, delay_sec FROM targets").fetchall()
+            
+            if not rows:
+                print("База чатов пуста.")
+            else:
+                for r_id, c_ent, t_id, cat, d_sec in rows:
+                    t_str = f" (Ветка: {t_id})" if t_id else ""
+                    print(f"[ID: {r_id}] {c_ent}{t_str} | Категория: {C_ICE}{cat}{C_RESET} | Задержка: {d_sec//60} мин.")
+            
+            print(f"\n{C_GRAY}Подсказка: Введите 'all' чтобы удалить все чаты разом.{C_RESET}")
+            del_id = (await ainput("ID для удаления (или Enter для выхода): ")).strip().lower()
+            
+            if del_id == 'all':
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.cursor().execute("DELETE FROM targets")
+                    conn.commit()
+                print(f"{C_GREEN}✅ Вся база чатов очищена.{C_RESET}")
+            elif del_id.isdigit():
                 with sqlite3.connect(DB_FILE) as conn:
                     conn.cursor().execute("DELETE FROM targets WHERE id = ?", (int(del_id),))
                     conn.commit()
@@ -525,10 +621,13 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         elif choice == "5":
             clear_screen()
-            mins = (await ainput("Интервал в минутах: ")).strip()
+            print(f"=== МАССОВОЕ ИЗМЕНЕНИЕ ИНТЕРВАЛА ===\n")
+            mins = (await ainput("Введите новый интервал (в минутах) для ВСЕХ чатов в базе: ")).strip()
             if mins.isdigit() and int(mins) > 0:
-                set_setting("interval", str(int(mins) * 60))
-                print(f"\n{C_GREEN}Интервал обновлен!{C_RESET}")
+                with sqlite3.connect(DB_FILE) as conn:
+                    conn.cursor().execute("UPDATE targets SET delay_sec = ?", (int(mins) * 60,))
+                    conn.commit()
+                print(f"\n{C_GREEN}✅ Интервал всех чатов успешно обновлен на {mins} мин.!{C_RESET}")
             await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
 
