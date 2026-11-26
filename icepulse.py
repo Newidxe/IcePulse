@@ -61,6 +61,15 @@ def init_db():
                         category TEXT DEFAULT 'Основная',
                         delay_sec INTEGER DEFAULT 900
                     )""")
+        c.execute("""CREATE TABLE IF NOT EXISTS category_ads (
+                        category TEXT PRIMARY KEY,
+                        ad_mode TEXT,
+                        ad_text TEXT,
+                        ad_photo TEXT,
+                        ad_source_chat TEXT,
+                        ad_msg_id INTEGER,
+                        ad_preview TEXT
+                    )""")
         try:
             c.execute("ALTER TABLE targets ADD COLUMN category TEXT DEFAULT 'Основная'")
         except Exception:
@@ -85,6 +94,81 @@ def set_setting(key: str, value: str):
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
         conn.commit()
+
+
+def get_category_ad(category: str) -> dict | None:
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute(
+            "SELECT ad_mode, ad_text, ad_photo, ad_source_chat, ad_msg_id, ad_preview FROM category_ads WHERE category = ?",
+            (category,)
+        )
+        row = c.fetchone()
+        if not row or not row[0]:
+            return None
+        return {
+            "ad_mode": row[0],
+            "ad_text": row[1] or "",
+            "ad_photo": row[2] or "",
+            "ad_source_chat": row[3] or "me",
+            "ad_msg_id": int(row[4] or 0),
+            "ad_preview": row[5] or ""
+        }
+
+
+def get_all_category_ads() -> dict[str, dict]:
+    result = {}
+    with sqlite3.connect(DB_FILE) as conn:
+        rows = conn.cursor().execute(
+            "SELECT category, ad_mode, ad_text, ad_photo, ad_source_chat, ad_msg_id, ad_preview FROM category_ads"
+        ).fetchall()
+    for cat, mode, txt, photo, src, msg_id, prev in rows:
+        if mode:
+            result[cat] = {
+                "ad_mode": mode,
+                "ad_text": txt or "",
+                "ad_photo": photo or "",
+                "ad_source_chat": src or "me",
+                "ad_msg_id": int(msg_id or 0),
+                "ad_preview": prev or ""
+            }
+    return result
+
+
+def set_category_ad(category: str, ad_mode: str, ad_text="", ad_photo="", ad_source_chat="me", ad_msg_id=0, ad_preview=""):
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.cursor().execute(
+            """INSERT OR REPLACE INTO category_ads
+               (category, ad_mode, ad_text, ad_photo, ad_source_chat, ad_msg_id, ad_preview)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (category, ad_mode, ad_text, ad_photo, str(ad_source_chat), int(ad_msg_id or 0), ad_preview)
+        )
+        conn.commit()
+
+
+def delete_category_ad(category: str):
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.cursor().execute("DELETE FROM category_ads WHERE category = ?", (category,))
+        conn.commit()
+
+
+def format_ad_label(ad_data: dict | None, fallback_label="Общий пост") -> str:
+    if not ad_data or not ad_data.get("ad_mode"):
+        return f"{C_GRAY}{fallback_label}{C_RESET}"
+    if ad_data["ad_mode"] == "console":
+        txt = ad_data.get("ad_text", "")
+        photo = ad_data.get("ad_photo", "")
+        short_txt = (txt[:30] + "...") if len(txt) > 30 else txt
+        photo_str = " + Фото" if photo else ""
+        return f"{C_GREEN}Текст: \"{short_txt}\"{photo_str}{C_RESET}"
+    if ad_data["ad_mode"] == "saved":
+        src = ad_data.get("ad_source_chat", "me") or "me"
+        msg_id = ad_data.get("ad_msg_id", 0)
+        preview = ad_data.get("ad_preview", "")
+        src_label = "Избранное" if src == "me" else src
+        prev_str = f" | \"{preview}\"" if preview else ""
+        return f"{C_GREEN}Пост ({src_label}, ID: {msg_id}){prev_str}{C_RESET}"
+    return f"{C_GRAY}{fallback_label}{C_RESET}"
 
 
 def remove_tg_session_files():
@@ -392,6 +476,93 @@ def format_msg_preview(msg) -> str:
     return "[Пустое сообщение]"
 
 
+async def configure_ad_interactive(client: TelegramClient, target_category: str | None = None):
+    clear_screen()
+    scope_title = f"ДЛЯ КАТЕГОРИИ '{target_category}'" if target_category else "ОБЩИЙ (ПО УМОЛЧАНИЮ)"
+    print(f"{C_ICE}{C_BOLD}=== НАСТРОЙКА ПОСТА: {scope_title} ==={C_RESET}\n")
+    print(f" {C_BOLD}[1]{C_RESET} Задать свой текст / фото           {C_GRAY}| Ввод текста прямо в консоли{C_RESET}")
+    print(f" {C_BOLD}[2]{C_RESET} Указать пост по ссылке или ID      {C_GRAY}| Ссылка t.me/.../123 или ID из Избранного{C_RESET}")
+    print(f" {C_BOLD}[3]{C_RESET} Взять последний пост из Избранного {C_GRAY}| Последнее сообщение в 'Избранное'{C_RESET}")
+    sub = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1-3 | 0 - Назад):{C_RESET} ")).strip()
+
+    if sub == "0" or sub not in ["1", "2", "3"]:
+        return
+
+    if sub == "1":
+        text_val = (await ainput(f"\n{C_BOLD}Введите рекламный текст{C_RESET} {C_GRAY}[0 - Отмена]{C_RESET}:{C_BOLD}\n-> {C_RESET}")).strip()
+        if text_val == "0" or not text_val:
+            return
+
+        photo_val = (await ainput(f"{C_BOLD}Путь к фото{C_RESET} {C_GRAY}(Enter - без фото, 0 - Отмена):{C_RESET} ")).strip().strip('"')
+        if photo_val == "0":
+            return
+
+        valid_photo = photo_val if os.path.isfile(photo_val) else ""
+        if target_category:
+            set_category_ad(target_category, "console", ad_text=text_val, ad_photo=valid_photo)
+        else:
+            set_setting("ad_mode", "console")
+            set_setting("ad_text", text_val)
+            set_setting("ad_photo", valid_photo)
+        print(f"\n{C_GREEN}Объявление успешно сохранено!{C_RESET}")
+
+    elif sub == "2":
+        raw_ref = (await ainput(f"\n{C_BOLD}Вставьте ссылку на пост (t.me/...) или ID из Избранного {C_GRAY}[0 - Отмена]{C_RESET}:\n-> ")).strip()
+        if raw_ref == "0":
+            return
+
+        src_chat, msg_id = parse_post_reference(raw_ref)
+        if not src_chat or not msg_id:
+            print(f"\n{C_RED}[!] Не удалось распознать ссылку или ID сообщения.{C_RESET}")
+        else:
+            try:
+                src_entity = int(src_chat) if src_chat.lstrip("-").isdigit() else src_chat
+                found_msg = await client.get_messages(src_entity, ids=msg_id)
+                if found_msg:
+                    prev = format_msg_preview(found_msg)
+                    if target_category:
+                        set_category_ad(
+                            target_category,
+                            "saved",
+                            ad_source_chat=str(src_chat),
+                            ad_msg_id=found_msg.id,
+                            ad_preview=prev
+                        )
+                    else:
+                        set_setting("ad_mode", "saved")
+                        set_setting("ad_source_chat", str(src_chat))
+                        set_setting("ad_msg_id", str(found_msg.id))
+                        set_setting("ad_preview", prev)
+                    print(f"\n{C_GREEN}Пост успешно найден и сохранён: \"{prev}\"{C_RESET}")
+                else:
+                    print(f"\n{C_RED}[!] Сообщение с таким ID не найдено.{C_RESET}")
+            except Exception as e:
+                print(f"\n{C_RED}[!] Ошибка доступа к посту: {e}{C_RESET}")
+
+    elif sub == "3":
+        msgs = await client.get_messages("me", limit=1)
+        if msgs:
+            prev = format_msg_preview(msgs[0])
+            if target_category:
+                set_category_ad(
+                    target_category,
+                    "saved",
+                    ad_source_chat="me",
+                    ad_msg_id=msgs[0].id,
+                    ad_preview=prev
+                )
+            else:
+                set_setting("ad_mode", "saved")
+                set_setting("ad_source_chat", "me")
+                set_setting("ad_msg_id", str(msgs[0].id))
+                set_setting("ad_preview", prev)
+            print(f"\n{C_GREEN}Последний пост из Избранного захвачен: \"{prev}\"{C_RESET}")
+        else:
+            print(f"\n{C_RED}[!] У вас пусто в 'Избранном'. Перешлите туда пост и попробуйте снова.{C_RESET}")
+
+    await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
+
+
 async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email: str, pass_hash: str):
     next_run_times = {}
 
@@ -402,25 +573,15 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
             stop_event.set()
             break
 
-        ad_mode = get_setting("ad_mode", "")
-        ad_text = get_setting("ad_text", "")
-        ad_photo = get_setting("ad_photo", "")
-        ad_msg_id = int(get_setting("ad_msg_id", "0") or 0)
-        ad_source_chat = get_setting("ad_source_chat", "me") or "me"
-
-        saved_msg_obj = None
-        if ad_mode == "saved":
-            src_entity = int(ad_source_chat) if ad_source_chat.lstrip("-").isdigit() else ad_source_chat
-            try:
-                saved_msg_obj = await client.get_messages(src_entity, ids=ad_msg_id)
-            except Exception as e:
-                print(f"{C_RED}[!] Ошибка получения поста ({ad_source_chat} / {ad_msg_id}): {e}{C_RESET}")
-                stop_event.set()
-                break
-            if not saved_msg_obj:
-                print(f"{C_RED}[!] Пост (ID: {ad_msg_id}) не найден.{C_RESET}")
-                stop_event.set()
-                break
+        global_ad = {
+            "ad_mode": get_setting("ad_mode", ""),
+            "ad_text": get_setting("ad_text", ""),
+            "ad_photo": get_setting("ad_photo", ""),
+            "ad_source_chat": get_setting("ad_source_chat", "me") or "me",
+            "ad_msg_id": int(get_setting("ad_msg_id", "0") or 0)
+        }
+        cat_ads = get_all_category_ads()
+        saved_msg_cache = {}
 
         with sqlite3.connect(DB_FILE) as conn:
             targets = conn.cursor().execute("SELECT id, chat_entity, topic_id, category, delay_sec FROM targets").fetchall()
@@ -434,15 +595,40 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
 
             if now_ts >= next_run_times.get(r_id, 0):
                 now_str = datetime.now().strftime("%H:%M:%S")
+                ad_cfg = cat_ads.get(category) or global_ad
+
+                if not ad_cfg.get("ad_mode"):
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_YELLOW}[Пропуск]{C_RESET} Для категории '{category}' не задан рекламный пост.")
+                    next_run_times[r_id] = time.time() + delay_sec
+                    continue
+
+                saved_msg_obj = None
+                if ad_cfg["ad_mode"] == "saved":
+                    cache_key = (ad_cfg["ad_source_chat"], ad_cfg["ad_msg_id"])
+                    if cache_key not in saved_msg_cache:
+                        src_chat = ad_cfg["ad_source_chat"]
+                        src_entity = int(src_chat) if src_chat.lstrip("-").isdigit() else src_chat
+                        try:
+                            saved_msg_cache[cache_key] = await client.get_messages(src_entity, ids=ad_cfg["ad_msg_id"])
+                        except Exception as e:
+                            print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[!] Ошибка загрузки поста ({src_chat}/{ad_cfg['ad_msg_id']}): {e}{C_RESET}")
+                            saved_msg_cache[cache_key] = None
+                    saved_msg_obj = saved_msg_cache[cache_key]
+                    if not saved_msg_obj:
+                        print(f"{C_GRAY}[{now_str}]{C_RESET} {C_RED}[!] Пост (ID: {ad_cfg['ad_msg_id']}) для категории '{category}' не найден.{C_RESET}")
+                        next_run_times[r_id] = time.time() + delay_sec
+                        continue
+
                 entity = int(chat_entity) if chat_entity.lstrip("-").isdigit() else chat_entity
                 topic_label = f" (Ветка: {topic_id})" if topic_id else ""
 
                 try:
-                    if ad_mode == "saved" and saved_msg_obj:
+                    if ad_cfg["ad_mode"] == "saved" and saved_msg_obj:
                         await client.send_message(entity=entity, message=saved_msg_obj, reply_to=topic_id)
                     else:
+                        ad_photo = ad_cfg.get("ad_photo", "")
                         file_to_send = ad_photo if (ad_photo and os.path.isfile(ad_photo)) else None
-                        await client.send_message(entity=entity, message=ad_text, file=file_to_send, reply_to=topic_id)
+                        await client.send_message(entity=entity, message=ad_cfg["ad_text"], file=file_to_send, reply_to=topic_id)
 
                     print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category} | {delay_sec//60}мин]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
                 except SlowModeWaitError as e:
@@ -472,21 +658,25 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
 
 
 def get_ad_summary() -> str:
-    mode = get_setting("ad_mode", "")
-    if mode == "console":
-        txt = get_setting("ad_text", "")
-        photo = get_setting("ad_photo", "")
-        short_txt = (txt[:35] + "...") if len(txt) > 35 else txt
-        photo_str = " + Фото" if photo else ""
-        return f"{C_GREEN}Текст из консоли: \"{short_txt}\"{photo_str}{C_RESET}"
-    elif mode == "saved":
-        msg_id = get_setting("ad_msg_id", "0")
-        src = get_setting("ad_source_chat", "me") or "me"
-        preview = get_setting("ad_preview", "")
-        src_label = "Избранное" if src == "me" else src
-        prev_str = f" | \"{preview}\"" if preview else ""
-        return f"{C_GREEN}Пост ({src_label}, ID: {msg_id}){prev_str}{C_RESET}"
-    return f"{C_RED}Не задан{C_RESET}"
+    global_ad = {
+        "ad_mode": get_setting("ad_mode", ""),
+        "ad_text": get_setting("ad_text", ""),
+        "ad_photo": get_setting("ad_photo", ""),
+        "ad_source_chat": get_setting("ad_source_chat", "me") or "me",
+        "ad_msg_id": int(get_setting("ad_msg_id", "0") or 0),
+        "ad_preview": get_setting("ad_preview", "")
+    }
+    with sqlite3.connect(DB_FILE) as conn:
+        active_cats = {row[0] for row in conn.cursor().execute("SELECT DISTINCT category FROM targets").fetchall()}
+    custom_ads = {k: v for k, v in get_all_category_ads().items() if k in active_cats}
+
+    base_str = format_ad_label(global_ad, fallback_label="")
+    if not global_ad["ad_mode"]:
+        base_str = f"{C_RED}Общий не задан{C_RESET}"
+
+    if custom_ads:
+        return f"{base_str} {C_ICE}(+ отд. постов для категорий: {len(custom_ads)}){C_RESET}"
+    return base_str
 
 
 async def console_menu(client: TelegramClient, email: str, pass_hash: str):
@@ -510,10 +700,10 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         print(f" Чатов в базе:    {C_BOLD}{chats_count} шт.{C_RESET}")
         print(f"{C_BLUE}----------------------------------------------------------------------{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Запустить авторассылку IcePulse       {C_GRAY}| Старт отправки сообщений{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / пост         {C_GRAY}| Консоль, ссылка на пост или Избранное{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / пост         {C_GRAY}| Общий или отдельно для категории{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и категории (TXT/Руки)  {C_GRAY}| Импорт баз с разной задержкой{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов базы / Удалить чаты      {C_GRAY}| Управление добавленными чатами{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Управление категориями и таймерами    {C_GRAY}| Настроить задержку по категориям{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Управление категориями и таймерами    {C_GRAY}| Таймеры и отдельные посты папок{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[6]{C_RESET} Активировать / продлить ключ IcePulse {C_GRAY}| Управление подпиской{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Сменить Telegram аккаунт / API        {C_GRAY}| Быстрая замена при спамблоке{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[8]{C_RESET} Выйти из профиля IcePulse             {C_GRAY}| Сменить почту / лицензию{C_RESET}")
@@ -584,7 +774,9 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             continue
 
         if choice == "1":
-            if not get_setting("ad_mode"):
+            has_global_ad = bool(get_setting("ad_mode"))
+            has_cat_ads = bool(get_all_category_ads())
+            if not has_global_ad and not has_cat_ads:
                 print(f"\n{C_YELLOW}Сначала задайте рекламный пост в пункте [2]!{C_RESET}")
                 await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
                 continue
@@ -607,65 +799,46 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         elif choice == "2":
             clear_screen()
-            print(f"{C_ICE}{C_BOLD}=== НАСТРОЙКА РЕКЛАМНОГО ОБЪЯВЛЕНИЯ ==={C_RESET}\n")
-            print(f" {C_BOLD}[1]{C_RESET} Задать свой текст / фото           {C_GRAY}| Ввод текста прямо в консоли{C_RESET}")
-            print(f" {C_BOLD}[2]{C_RESET} Указать пост по ссылке или ID      {C_GRAY}| Ссылка t.me/.../123 или ID из Избранного{C_RESET}")
-            print(f" {C_BOLD}[3]{C_RESET} Взять последний пост из Избранного {C_GRAY}| Последнее сообщение в 'Избранное'{C_RESET}")
-            sub = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1-3 | 0 - Назад):{C_RESET} ")).strip()
+            print(f"{C_ICE}{C_BOLD}=== НАСТРОЙКА РЕКЛАМНОГО ПОСТА ==={C_RESET}\n")
+            print(f" {C_BOLD}[1]{C_RESET} Общий пост (по умолчанию)         {C_GRAY}| Для всех категорий без своего поста{C_RESET}")
+            print(f" {C_BOLD}[2]{C_RESET} Отдельный пост для категории      {C_GRAY}| Выбрать папку чатов и задать ей свой пост{C_RESET}")
+            print(f" {C_BOLD}[3]{C_RESET} Сбросить отдельный пост категории {C_GRAY}| Вернуть категорию на общий пост{C_RESET}")
+            scope = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1-3 | 0 - Назад):{C_RESET} ")).strip()
 
-            if sub == "0":
+            if scope == "0":
                 continue
 
-            if sub == "1":
-                text_val = (await ainput(f"\n{C_BOLD}Введите рекламный текст{C_RESET} {C_GRAY}[0 - Отмена]{C_RESET}:{C_BOLD}\n-> {C_RESET}")).strip()
-                if text_val == "0":
+            if scope == "1":
+                await configure_ad_interactive(client, target_category=None)
+
+            elif scope in ["2", "3"]:
+                with sqlite3.connect(DB_FILE) as conn:
+                    cat_rows = conn.cursor().execute("SELECT DISTINCT category FROM targets ORDER BY category").fetchall()
+                cats = [r[0] for r in cat_rows]
+
+                if not cats:
+                    print(f"\n{C_YELLOW}В базе пока нет ни одной категории. Сначала добавьте чаты в пункте [3].{C_RESET}")
+                    await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
                     continue
 
-                if text_val:
-                    photo_val = (await ainput(f"{C_BOLD}Путь к фото{C_RESET} {C_GRAY}(Enter - без фото, 0 - Отмена):{C_RESET} ")).strip().strip('"')
-                    if photo_val == "0":
-                        continue
+                clear_screen()
+                title = "ВЫБЕРИТЕ КАТЕГОРИЮ ДЛЯ ОТДЕЛЬНОГО ПОСТА" if scope == "2" else "ВЫБЕРИТЕ КАТЕГОРИЮ ДЛЯ СБРОСА ПОСТА"
+                print(f"{C_ICE}{C_BOLD}=== {title} ==={C_RESET}\n")
+                for i, cat in enumerate(cats, 1):
+                    c_ad = get_category_ad(cat)
+                    print(f" [{i}] {C_ICE}{cat}{C_RESET} | {format_ad_label(c_ad)}")
 
-                    set_setting("ad_mode", "console")
-                    set_setting("ad_text", text_val)
-                    set_setting("ad_photo", photo_val if os.path.isfile(photo_val) else "")
-                    print(f"\n{C_GREEN}Объявление успешно сохранено!{C_RESET}")
-
-            elif sub == "2":
-                raw_ref = (await ainput(f"\n{C_BOLD}Вставьте ссылку на пост (t.me/...) или ID из Избранного {C_GRAY}[0 - Отмена]{C_RESET}:\n-> ")).strip()
-                if raw_ref == "0":
+                pick = (await ainput(f"\n{C_BOLD}Номер категории {C_GRAY}[0 - Назад]:{C_RESET} ")).strip()
+                if pick == "0" or not pick.isdigit() or not (1 <= int(pick) <= len(cats)):
                     continue
 
-                src_chat, msg_id = parse_post_reference(raw_ref)
-                if not src_chat or not msg_id:
-                    print(f"\n{C_RED}[!] Не удалось распознать ссылку или ID сообщения.{C_RESET}")
+                chosen_cat = cats[int(pick) - 1]
+                if scope == "2":
+                    await configure_ad_interactive(client, target_category=chosen_cat)
                 else:
-                    try:
-                        src_entity = int(src_chat) if src_chat.lstrip("-").isdigit() else src_chat
-                        found_msg = await client.get_messages(src_entity, ids=msg_id)
-                        if found_msg:
-                            set_setting("ad_mode", "saved")
-                            set_setting("ad_source_chat", str(src_chat))
-                            set_setting("ad_msg_id", str(found_msg.id))
-                            set_setting("ad_preview", format_msg_preview(found_msg))
-                            print(f"\n{C_GREEN}Пост успешно найден и сохранён: \"{format_msg_preview(found_msg)}\"{C_RESET}")
-                        else:
-                            print(f"\n{C_RED}[!] Сообщение с таким ID не найдено.{C_RESET}")
-                    except Exception as e:
-                        print(f"\n{C_RED}[!] Ошибка доступа к посту: {e}{C_RESET}")
-
-            elif sub == "3":
-                msgs = await client.get_messages("me", limit=1)
-                if msgs:
-                    set_setting("ad_mode", "saved")
-                    set_setting("ad_source_chat", "me")
-                    set_setting("ad_msg_id", str(msgs[0].id))
-                    set_setting("ad_preview", format_msg_preview(msgs[0]))
-                    print(f"\n{C_GREEN}Последний пост из Избранного захвачен: \"{format_msg_preview(msgs[0])}\"{C_RESET}")
-                else:
-                    print(f"\n{C_RED}[!] У вас пусто в 'Избранном'. Перешлите туда пост и попробуйте снова.{C_RESET}")
-
-            await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
+                    delete_category_ad(chosen_cat)
+                    print(f"\n{C_GREEN}Для категории '{chosen_cat}' снова используется общий пост.{C_RESET}")
+                    await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
         elif choice == "3":
             clear_screen()
@@ -762,6 +935,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             if del_id == 'all':
                 with sqlite3.connect(DB_FILE) as conn:
                     conn.cursor().execute("DELETE FROM targets")
+                    conn.cursor().execute("DELETE FROM category_ads")
                     conn.commit()
                 print(f"\n{C_GREEN}Вся база чатов успешно очищена.{C_RESET}")
             elif del_id.isdigit():
@@ -773,41 +947,59 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
 
         elif choice == "5":
             clear_screen()
-            print(f"{C_ICE}{C_BOLD}=== УПРАВЛЕНИЕ КАТЕГОРИЯМИ И ТАЙМЕРАМИ ==={C_RESET}\n")
+            print(f"{C_ICE}{C_BOLD}=== УПРАВЛЕНИЕ КАТЕГОРИЯМИ, ТАЙМЕРАМИ И ПОСТАМИ ==={C_RESET}\n")
 
             with sqlite3.connect(DB_FILE) as conn:
-                categories = conn.cursor().execute("SELECT DISTINCT category, delay_sec FROM targets").fetchall()
+                categories = conn.cursor().execute(
+                    "SELECT category, MIN(delay_sec), COUNT(*) FROM targets GROUP BY category ORDER BY category"
+                ).fetchall()
 
             if not categories:
                 print(f"{C_YELLOW}В базе пока нет ни одной категории с чатами.{C_RESET}")
-            else:
-                print(f" {C_BOLD}Текущие категории в базе:{C_RESET}")
-                for i, (cat, d_sec) in enumerate(categories, 1):
-                    print(f" [{i}] Категория: {C_ICE}{cat}{C_RESET} | Задержка: {C_BOLD}{d_sec // 60} мин.{C_RESET}")
+                await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
+                continue
 
-                print(f"\n{C_GRAY}Вы можете изменить задержку для конкретной категории.{C_RESET}")
-                cat_choice = (await ainput(f"Введите номер категории для изменения {C_GRAY}[0 - Назад]:{C_RESET} ")).strip()
-                if cat_choice == "0" or not cat_choice:
-                    continue
+            print(f" {C_BOLD}Текущие категории (папки) в базе:{C_RESET}")
+            for i, (cat, d_sec, cnt) in enumerate(categories, 1):
+                c_ad = get_category_ad(cat)
+                print(f" [{i}] {C_ICE}{cat}{C_RESET} ({cnt} шт.) | {C_BOLD}{d_sec // 60} мин.{C_RESET} | Пост: {format_ad_label(c_ad)}")
 
-                if cat_choice.isdigit() and 1 <= int(cat_choice) <= len(categories):
-                    target_cat = categories[int(cat_choice) - 1][0]
-                    new_m = (await ainput(f"Введите новый интервал в минутах для категории '{target_cat}' {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
+            cat_choice = (await ainput(f"\nВведите номер категории для настройки {C_GRAY}[0 - Назад]:{C_RESET} ")).strip()
+            if cat_choice == "0" or not cat_choice:
+                continue
+
+            if cat_choice.isdigit() and 1 <= int(cat_choice) <= len(categories):
+                target_cat = categories[int(cat_choice) - 1][0]
+                clear_screen()
+                print(f"{C_ICE}{C_BOLD}=== КАТЕГОРИЯ: {target_cat} ==={C_RESET}\n")
+                print(f" Текущий пост: {format_ad_label(get_category_ad(target_cat))}\n")
+                print(f" {C_BOLD}[1]{C_RESET} Изменить интервал рассылки (таймер)")
+                print(f" {C_BOLD}[2]{C_RESET} Задать отдельный рекламный пост")
+                print(f" {C_BOLD}[3]{C_RESET} Сбросить пост на общий")
+                print(f" {C_BOLD}[0]{C_RESET} Назад")
+
+                act = (await ainput(f"\n{C_BOLD}Ваш выбор (0-3): {C_RESET}")).strip()
+                if act == "1":
+                    new_m = (await ainput(f"\nВведите новый интервал в минутах для '{target_cat}' {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
                     if new_m == "0":
                         continue
-
                     if new_m.isdigit() and int(new_m) > 0:
-                        new_sec = int(new_m) * 60
                         with sqlite3.connect(DB_FILE) as conn:
-                            conn.cursor().execute("UPDATE targets SET delay_sec = ? WHERE category = ?", (new_sec, target_cat))
+                            conn.cursor().execute("UPDATE targets SET delay_sec = ? WHERE category = ?", (int(new_m) * 60, target_cat))
                             conn.commit()
-                        print(f"\n{C_GREEN}Задержка для категории '{target_cat}' успешно обновлена на {new_m} мин.!{C_RESET}")
+                        print(f"\n{C_GREEN}Задержка для категории '{target_cat}' обновлена на {new_m} мин.!{C_RESET}")
                     else:
                         print(f"\n{C_RED}[!] Неверное значение минут.{C_RESET}")
-                else:
-                    print(f"\n{C_RED}[!] Неверный выбор категории.{C_RESET}")
-
-            await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
+                    await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
+                elif act == "2":
+                    await configure_ad_interactive(client, target_category=target_cat)
+                elif act == "3":
+                    delete_category_ad(target_cat)
+                    print(f"\n{C_GREEN}Для категории '{target_cat}' снова используется общий пост.{C_RESET}")
+                    await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
+            else:
+                print(f"\n{C_RED}[!] Неверный выбор категории.{C_RESET}")
+                await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
 
 async def main():
