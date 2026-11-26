@@ -24,7 +24,6 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError, SlowModeWaitError, SessionPasswordNeededError
 import qrcode
 
-# === НАСТРОЙКИ И ПУТИ ===
 IMPORT_DIR = "Import_Bases"
 if not os.path.exists(IMPORT_DIR):
     os.makedirs(IMPORT_DIR)
@@ -47,7 +46,7 @@ C_RED = "\033[91m"
 C_YELLOW = "\033[93m"
 C_GRAY = "\033[90m"
 
-# === БАЗА ДАННЫХ И НАСТРОЙКИ ===
+
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
@@ -72,6 +71,7 @@ def init_db():
             pass
         conn.commit()
 
+
 def get_setting(key: str, default=""):
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
@@ -79,11 +79,24 @@ def get_setting(key: str, default=""):
         row = c.fetchone()
         return row[0] if row is not None else default
 
+
 def set_setting(key: str, value: str):
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
         conn.commit()
+
+
+def remove_tg_session_files():
+    removed = True
+    for sf in [f"{SESSION_FILE}.session", f"{SESSION_FILE}.session-journal"]:
+        if os.path.exists(sf):
+            try:
+                os.remove(sf)
+            except Exception:
+                removed = False
+    return removed
+
 
 def reset_local_data():
     try:
@@ -92,44 +105,37 @@ def reset_local_data():
                 os.remove(DB_FILE)
             except Exception:
                 pass
-                
-        for sf in [f"{SESSION_FILE}.session", f"{SESSION_FILE}.session-journal"]:
-            if os.path.exists(sf):
-                try:
-                    os.remove(sf)
-                except Exception:
-                    pass
-                    
+        remove_tg_session_files()
         init_db()
         return True
     except Exception:
         return False
 
-# === СИСТЕМА УМНОГО АВТООБНОВЛЕНИЯ ===
+
 def check_for_updates():
     try:
         print("[*] Проверка обновлений...")
         local_version = get_setting("current_version", "1.0")
-        
+
         response = requests.get(VERSION_URL, timeout=3)
         if response.status_code == 200:
             latest_version = response.text.strip()
-            
+
             if latest_version != local_version:
                 print(f"\n[!] Вышла новая версия {latest_version}, загружаем обновление...")
-                
+
                 script_response = requests.get(SCRIPT_URL, timeout=10)
                 if script_response.status_code == 200:
                     new_code = script_response.text
-                    
+
                     with open("icepulse.py", "w", encoding="utf-8") as f:
                         f.write(new_code)
-                    
+
                     set_setting("current_version", latest_version)
-                    
+
                     print("[+] Обновление успешно установлено! Быстрый перезапуск...\n")
                     time.sleep(1)
-                    
+
                     subprocess.call([sys.executable] + sys.argv)
                     sys.exit(0)
             else:
@@ -137,11 +143,14 @@ def check_for_updates():
     except Exception:
         print("[*] Автообновление пропущено (оффлайн режим).")
 
+
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
+
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.strip().encode("utf-8")).hexdigest()
+
 
 def get_hwid() -> str:
     raw_id = ""
@@ -165,7 +174,9 @@ def get_hwid() -> str:
     digest = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:16].upper()
     return f"HWID-{digest[:4]}-{digest[4:8]}-{digest[8:12]}-{digest[12:16]}"
 
+
 USER_HWID = get_hwid()
+
 
 def supabase_rpc(func_name: str, payload: dict) -> dict:
     url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/rpc/{func_name}"
@@ -176,6 +187,7 @@ def supabase_rpc(func_name: str, payload: dict) -> dict:
     }
     r = requests.post(url, json=payload, headers=headers, timeout=10)
     return r.json()
+
 
 def register_profile_online(email: str, password: str) -> tuple[bool, str]:
     try:
@@ -189,6 +201,7 @@ def register_profile_online(email: str, password: str) -> tuple[bool, str]:
         return False, f"{C_RED}{data.get('msg', 'Ошибка регистрации.')}{C_RESET}"
     except Exception as e:
         return False, f"{C_RED}Ошибка связи с сервером: {e}{C_RESET}"
+
 
 def check_profile_online(email: str, pass_hash: str) -> tuple[bool, bool, str]:
     try:
@@ -208,9 +221,10 @@ def check_profile_online(email: str, pass_hash: str) -> tuple[bool, bool, str]:
             exp_str = data.get("expires_str", "")
             return True, True, f"{C_GREEN}АКТИВНА ({days} дн. {hours} ч. {mins} мин. | до {exp_str}){C_RESET}"
         else:
-            return True, False, f"{C_RED}НЕ АКТИВНА (Активируйте ключ в пункте [7]){C_RESET}"
+            return True, False, f"{C_RED}НЕ АКТИВНА (Активируйте ключ в пункте [6]){C_RESET}"
     except Exception:
         return True, False, f"{C_YELLOW}Нет связи с сервером лицензий (проверьте интернет){C_RESET}"
+
 
 def activate_key_online(email: str, pass_hash: str, key_code: str) -> tuple[bool, str]:
     try:
@@ -226,8 +240,10 @@ def activate_key_online(email: str, pass_hash: str, key_code: str) -> tuple[bool
     except Exception as e:
         return False, f"{C_RED}Ошибка соединения с сервером: {e}{C_RESET}"
 
+
 async def ainput(prompt: str = "") -> str:
     return await asyncio.to_thread(input, prompt)
+
 
 async def ensure_authenticated() -> tuple[str, str]:
     saved_email = get_setting("user_email", "")
@@ -252,8 +268,8 @@ async def ensure_authenticated() -> tuple[str, str]:
         print(f" Ваш HWID: {C_ICE}{USER_HWID}{C_RESET}\n")
         print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Войти в существующий профиль     {C_GRAY}| Для уже зарегистрированных{C_RESET}")
         print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Создать новый профиль            {C_GRAY}| Регистрация и привязка HWID{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Сбросить привязку (Очистка кэша) {C_GRAY}| 🔄 Удалить локальные данные{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход                            {C_GRAY}| ❌ Закрыть программу{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Сбросить привязку (Очистка кэша) {C_GRAY}| Удалить локальные данные{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход                            {C_GRAY}| Закрыть программу{C_RESET}")
         print(f"{C_ICE}{C_BOLD}========================================================{C_RESET}")
 
         choice = (await ainput(f"\n{C_BOLD}Выберите действие (0-3): {C_RESET}")).strip()
@@ -262,18 +278,20 @@ async def ensure_authenticated() -> tuple[str, str]:
             raise SystemExit()
         elif choice == "3":
             if reset_local_data():
-                print(f"\n{C_GREEN}✅ Локальные данные и привязки успешно сброшены!{C_RESET}")
+                print(f"\n{C_GREEN}Локальные данные и привязки успешно сброшены!{C_RESET}")
             else:
-                print(f"\n{C_YELLOW}⚠️ Часть файлов занята процессами, но база пересоздана.{C_RESET}")
+                print(f"\n{C_YELLOW}Часть файлов занята процессами, но база пересоздана.{C_RESET}")
             await asyncio.sleep(1.5)
             continue
         elif choice == "1":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== ВХОД В ПРОФИЛЬ ICEPULSE ==={C_RESET}\n")
             email = (await ainput(f"Введите вашу почту (Email) {C_GRAY}[0 - Назад]{C_RESET}: ")).strip().lower()
-            if email == "0": continue
+            if email == "0":
+                continue
             password = (await ainput(f"Введите ваш пароль {C_GRAY}[0 - Назад]{C_RESET}: ")).strip()
-            if password == "0": continue
+            if password == "0":
+                continue
 
             if not email or not password:
                 print(f"\n{C_RED}Почта и пароль не могут быть пустыми.{C_RESET}")
@@ -297,9 +315,11 @@ async def ensure_authenticated() -> tuple[str, str]:
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== СОЗДАНИЕ ПРОФИЛЯ ICEPULSE ==={C_RESET}")
             email = (await ainput(f"Введите вашу почту {C_GRAY}[0 - Назад]{C_RESET}: ")).strip().lower()
-            if email == "0": continue
+            if email == "0":
+                continue
             password = (await ainput(f"Придумайте пароль (мин. 4 символа) {C_GRAY}[0 - Назад]{C_RESET}: ")).strip()
-            if password == "0": continue
+            if password == "0":
+                continue
 
             if "@" not in email or "." not in email:
                 print(f"\n{C_RED}Укажите корректный адрес почты.{C_RESET}")
@@ -323,6 +343,7 @@ async def ensure_authenticated() -> tuple[str, str]:
             else:
                 await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
+
 def parse_single_target(raw: str) -> tuple[str | None, int | None]:
     raw = raw.strip()
     if not raw:
@@ -338,6 +359,39 @@ def parse_single_target(raw: str) -> tuple[str | None, int | None]:
 
     return raw.lstrip("@"), None
 
+
+def parse_post_reference(raw: str) -> tuple[str | None, int | None]:
+    raw = raw.strip()
+    if not raw:
+        return None, None
+
+    if raw.isdigit():
+        return "me", int(raw)
+
+    m_priv = re.search(r"t\.me/c/(\d+)/(?:\d+/)?(\d+)", raw)
+    if m_priv:
+        return f"-100{m_priv.group(1)}", int(m_priv.group(2))
+
+    m_pub = re.search(r"t\.me/([a-zA-Z0-9_]+)/(?:\d+/)?(\d+)", raw)
+    if m_pub:
+        return m_pub.group(1), int(m_pub.group(2))
+
+    return None, None
+
+
+def format_msg_preview(msg) -> str:
+    txt = (msg.raw_text or "").replace("\n", " ").strip()
+    if txt:
+        return (txt[:40] + "...") if len(txt) > 40 else txt
+    if msg.photo:
+        return "[Фото без текста]"
+    if msg.video:
+        return "[Видео без текста]"
+    if msg.document:
+        return "[Файл / Медиа]"
+    return "[Пустое сообщение]"
+
+
 async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email: str, pass_hash: str):
     next_run_times = {}
 
@@ -352,12 +406,19 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
         ad_text = get_setting("ad_text", "")
         ad_photo = get_setting("ad_photo", "")
         ad_msg_id = int(get_setting("ad_msg_id", "0") or 0)
+        ad_source_chat = get_setting("ad_source_chat", "me") or "me"
 
         saved_msg_obj = None
         if ad_mode == "saved":
-            saved_msg_obj = await client.get_messages("me", ids=ad_msg_id)
+            src_entity = int(ad_source_chat) if ad_source_chat.lstrip("-").isdigit() else ad_source_chat
+            try:
+                saved_msg_obj = await client.get_messages(src_entity, ids=ad_msg_id)
+            except Exception as e:
+                print(f"{C_RED}[!] Ошибка получения поста ({ad_source_chat} / {ad_msg_id}): {e}{C_RESET}")
+                stop_event.set()
+                break
             if not saved_msg_obj:
-                print(f"{C_RED}[!] Пост в 'Избранном' не найден.{C_RESET}")
+                print(f"{C_RED}[!] Пост (ID: {ad_msg_id}) не найден.{C_RESET}")
                 stop_event.set()
                 break
 
@@ -383,7 +444,7 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
                         file_to_send = ad_photo if (ad_photo and os.path.isfile(ad_photo)) else None
                         await client.send_message(entity=entity, message=ad_text, file=file_to_send, reply_to=topic_id)
 
-                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category} | Задержка: {delay_sec//60}мин]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
+                    print(f"{C_GRAY}[{now_str}]{C_RESET} {C_ICE}[Кат: {category} | {delay_sec//60}мин]{C_RESET} {C_GREEN}Отправлено:{C_RESET} {chat_entity}{topic_label}")
                 except SlowModeWaitError as e:
                     print(f"{C_GRAY}[{now_str}]{C_RESET} {C_YELLOW}[Медленный режим]{C_RESET} {chat_entity}: ждём {e.seconds} сек.")
                 except FloodWaitError as e:
@@ -409,6 +470,7 @@ async def mailing_loop(client: TelegramClient, stop_event: asyncio.Event, email:
             except asyncio.TimeoutError:
                 pass
 
+
 def get_ad_summary() -> str:
     mode = get_setting("ad_mode", "")
     if mode == "console":
@@ -419,8 +481,13 @@ def get_ad_summary() -> str:
         return f"{C_GREEN}Текст из консоли: \"{short_txt}\"{photo_str}{C_RESET}"
     elif mode == "saved":
         msg_id = get_setting("ad_msg_id", "0")
-        return f"{C_GREEN}Пост из Избранного (ID: {msg_id}){C_RESET}"
+        src = get_setting("ad_source_chat", "me") or "me"
+        preview = get_setting("ad_preview", "")
+        src_label = "Избранное" if src == "me" else src
+        prev_str = f" | \"{preview}\"" if preview else ""
+        return f"{C_GREEN}Пост ({src_label}, ID: {msg_id}){prev_str}{C_RESET}"
     return f"{C_RED}Не задан{C_RESET}"
+
 
 async def console_menu(client: TelegramClient, email: str, pass_hash: str):
     me = await client.get_me()
@@ -442,37 +509,71 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         print(f" Рекламный пост:  {get_ad_summary()}")
         print(f" Чатов в базе:    {C_BOLD}{chats_count} шт.{C_RESET}")
         print(f"{C_BLUE}----------------------------------------------------------------------{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Запустить авторассылку IcePulse       {C_GRAY}| 🚀 Старт отправки сообщений{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / фото         {C_GRAY}| 📝 Что будем рассылать?{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и категории (TXT/Руки)  {C_GRAY}| 📂 Импорт баз с разной задержкой{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов базы / Удалить чаты      {C_GRAY}| 📋 Управление добавленными чатами{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Управление категориями и таймерами    {C_GRAY}| ⏱️ Настроить задержку по категориям{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[6]{C_RESET} Активировать / продлить ключ IcePulse {C_GRAY}| 🔑 Управление подпиской{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Сменить аккаунт (Очистка сессии)      {C_GRAY}| 🔄 Выйти из текущего профиля{C_RESET}")
-        print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход из программы                    {C_GRAY}| ❌ Закрыть софт{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Запустить авторассылку IcePulse       {C_GRAY}| Старт отправки сообщений{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Задать рекламный текст / пост         {C_GRAY}| Консоль, ссылка на пост или Избранное{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[3]{C_RESET} Добавить чаты и категории (TXT/Руки)  {C_GRAY}| Импорт баз с разной задержкой{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[4]{C_RESET} Список чатов базы / Удалить чаты      {C_GRAY}| Управление добавленными чатами{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[5]{C_RESET} Управление категориями и таймерами    {C_GRAY}| Настроить задержку по категориям{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[6]{C_RESET} Активировать / продлить ключ IcePulse {C_GRAY}| Управление подпиской{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[7]{C_RESET} Сменить Telegram аккаунт / API        {C_GRAY}| Быстрая замена при спамблоке{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[8]{C_RESET} Выйти из профиля IcePulse             {C_GRAY}| Сменить почту / лицензию{C_RESET}")
+        print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Выход из программы                    {C_GRAY}| Закрыть софт{C_RESET}")
         print(f"{C_ICE}{C_BOLD}======================================================================{C_RESET}")
 
-        choice = (await ainput(f"\n{C_BOLD}Выберите пункт меню (0-7): {C_RESET}")).strip()
+        choice = (await ainput(f"\n{C_BOLD}Выберите пункт меню (0-8): {C_RESET}")).strip()
 
         if choice == "6":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== АКТИВАЦИЯ КЛЮЧА ==={C_RESET}")
             key_str = (await ainput(f"Введите ваш ключ {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
-            if key_str == "0": continue
-            
+            if key_str == "0":
+                continue
+
             _, msg = await asyncio.to_thread(activate_key_online, email, pass_hash, key_str)
             print(f"\n{msg}")
             await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
             continue
 
         if choice == "7":
-            set_setting("user_email", "")
-            set_setting("user_pass_hash", "")
-            if reset_local_data():
-                print(f"\n{C_GREEN}✅ Сессия Telegram успешно очищена! Программа перезапустится.{C_RESET}")
-            await asyncio.sleep(2)
+            clear_screen()
+            print(f"{C_ICE}{C_BOLD}=== СМЕНА TELEGRAM АККАУНТА И API ==={C_RESET}\n")
+            print(f"{C_GRAY}База чатов, категории, задержки и профиль IcePulse сохранятся.{C_RESET}\n")
+            print(f" {C_ICE}{C_BOLD}[1]{C_RESET} Сменить только Telegram аккаунт       {C_GRAY}| Очистить сессию (API останется){C_RESET}")
+            print(f" {C_ICE}{C_BOLD}[2]{C_RESET} Сменить Telegram аккаунт + API ключи  {C_GRAY}| Очистить сессию, API_ID и API_HASH{C_RESET}")
+            print(f" {C_ICE}{C_BOLD}[0]{C_RESET} Назад")
+
+            sub = (await ainput(f"\n{C_BOLD}Ваш выбор (0-2): {C_RESET}")).strip()
+            if sub == "0" or sub not in ["1", "2"]:
+                continue
+
+            print(f"\n{C_YELLOW}Отключение текущего аккаунта Telegram...{C_RESET}")
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
+            remove_tg_session_files()
+
+            if sub == "2":
+                set_setting("api_id", "")
+                set_setting("api_hash", "")
+                print(f"{C_GREEN}Сессия Telegram и API ключи очищены! Перезапуск для нового входа...{C_RESET}")
+            else:
+                print(f"{C_GREEN}Сессия Telegram очищена! Перезапуск для входа в новый аккаунт...{C_RESET}")
+
+            await asyncio.sleep(1.5)
             subprocess.call([sys.executable] + sys.argv)
             sys.exit(0)
+
+        if choice == "8":
+            clear_screen()
+            confirm = (await ainput(f"{C_YELLOW}Выйти из профиля IcePulse ({email})?{C_RESET} {C_GRAY}(1 - Да, 0 - Отмена):{C_RESET} ")).strip()
+            if confirm != "1":
+                continue
+            set_setting("user_email", "")
+            set_setting("user_pass_hash", "")
+            email, pass_hash = await ensure_authenticated()
+            continue
 
         if choice == "0":
             break
@@ -495,7 +596,7 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             clear_screen()
             print(f"{C_ICE}ICEPULSE АКТИВЕН. Независимые таймеры по категориям запущены.{C_RESET}")
             print(f"{C_GRAY}Нажмите Enter для остановки рассылки.{C_RESET}\n")
-            
+
             stop_event = asyncio.Event()
             task = asyncio.create_task(mailing_loop(client, stop_event, email, pass_hash))
             await ainput()
@@ -507,32 +608,63 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
         elif choice == "2":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== НАСТРОЙКА РЕКЛАМНОГО ОБЪЯВЛЕНИЯ ==={C_RESET}\n")
-            print(f" {C_BOLD}[1]{C_RESET} Задать свой текст / фото          {C_GRAY}| Ввод текста прямо в консоли{C_RESET}")
-            print(f" {C_BOLD}[2]{C_RESET} Взять пост из Избранного          {C_GRAY}| Скопирует последнее сообщение из 'Избранное' в ТГ{C_RESET}")
-            sub = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1 или 2 | 0 - Назад):{C_RESET} ")).strip()
-            
-            if sub == "0": continue
+            print(f" {C_BOLD}[1]{C_RESET} Задать свой текст / фото           {C_GRAY}| Ввод текста прямо в консоли{C_RESET}")
+            print(f" {C_BOLD}[2]{C_RESET} Указать пост по ссылке или ID      {C_GRAY}| Ссылка t.me/.../123 или ID из Избранного{C_RESET}")
+            print(f" {C_BOLD}[3]{C_RESET} Взять последний пост из Избранного {C_GRAY}| Последнее сообщение в 'Избранное'{C_RESET}")
+            sub = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1-3 | 0 - Назад):{C_RESET} ")).strip()
+
+            if sub == "0":
+                continue
 
             if sub == "1":
                 text_val = (await ainput(f"\n{C_BOLD}Введите рекламный текст{C_RESET} {C_GRAY}[0 - Отмена]{C_RESET}:{C_BOLD}\n-> {C_RESET}")).strip()
-                if text_val == "0": continue
-                
+                if text_val == "0":
+                    continue
+
                 if text_val:
                     photo_val = (await ainput(f"{C_BOLD}Путь к фото{C_RESET} {C_GRAY}(Enter - без фото, 0 - Отмена):{C_RESET} ")).strip().strip('"')
-                    if photo_val == "0": continue
-                    
+                    if photo_val == "0":
+                        continue
+
                     set_setting("ad_mode", "console")
                     set_setting("ad_text", text_val)
                     set_setting("ad_photo", photo_val if os.path.isfile(photo_val) else "")
-                    print(f"\n{C_GREEN}✅ Объявление успешно сохранено!{C_RESET}")
+                    print(f"\n{C_GREEN}Объявление успешно сохранено!{C_RESET}")
+
             elif sub == "2":
+                raw_ref = (await ainput(f"\n{C_BOLD}Вставьте ссылку на пост (t.me/...) или ID из Избранного {C_GRAY}[0 - Отмена]{C_RESET}:\n-> ")).strip()
+                if raw_ref == "0":
+                    continue
+
+                src_chat, msg_id = parse_post_reference(raw_ref)
+                if not src_chat or not msg_id:
+                    print(f"\n{C_RED}[!] Не удалось распознать ссылку или ID сообщения.{C_RESET}")
+                else:
+                    try:
+                        src_entity = int(src_chat) if src_chat.lstrip("-").isdigit() else src_chat
+                        found_msg = await client.get_messages(src_entity, ids=msg_id)
+                        if found_msg:
+                            set_setting("ad_mode", "saved")
+                            set_setting("ad_source_chat", str(src_chat))
+                            set_setting("ad_msg_id", str(found_msg.id))
+                            set_setting("ad_preview", format_msg_preview(found_msg))
+                            print(f"\n{C_GREEN}Пост успешно найден и сохранён: \"{format_msg_preview(found_msg)}\"{C_RESET}")
+                        else:
+                            print(f"\n{C_RED}[!] Сообщение с таким ID не найдено.{C_RESET}")
+                    except Exception as e:
+                        print(f"\n{C_RED}[!] Ошибка доступа к посту: {e}{C_RESET}")
+
+            elif sub == "3":
                 msgs = await client.get_messages("me", limit=1)
                 if msgs:
                     set_setting("ad_mode", "saved")
+                    set_setting("ad_source_chat", "me")
                     set_setting("ad_msg_id", str(msgs[0].id))
-                    print(f"\n{C_GREEN}✅ Пост из Избранного успешно захвачен!{C_RESET}")
+                    set_setting("ad_preview", format_msg_preview(msgs[0]))
+                    print(f"\n{C_GREEN}Последний пост из Избранного захвачен: \"{format_msg_preview(msgs[0])}\"{C_RESET}")
                 else:
                     print(f"\n{C_RED}[!] У вас пусто в 'Избранном'. Перешлите туда пост и попробуйте снова.{C_RESET}")
+
             await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
         elif choice == "3":
@@ -541,63 +673,71 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             print(f" {C_ICE}[1]{C_RESET} Добавить один чат вручную         {C_GRAY}| Вставить ссылку или @username{C_RESET}")
             print(f" {C_ICE}[2]{C_RESET} Импорт базы чатов из файла .TXT   {C_GRAY}| Авто-выбор файлов из папки '{IMPORT_DIR}'{C_RESET}")
             sub = (await ainput(f"\n{C_BOLD}Ваш выбор {C_GRAY}(1-2 | 0 - Назад):{C_RESET} ")).strip()
-            
-            if sub == "0": continue
-            
+
+            if sub == "0":
+                continue
+
             targets_to_add = []
             if sub == "1":
                 raw = (await ainput(f"\n{C_BOLD}Вставьте ссылку или @username:{C_RESET} {C_GRAY}[0 - Отмена]{C_RESET}\n-> ")).strip()
-                if raw == "0": continue
+                if raw == "0":
+                    continue
                 c, t = parse_single_target(raw)
-                if c: targets_to_add.append((c, t))
+                if c:
+                    targets_to_add.append((c, t))
             elif sub == "2":
                 txt_files = [f for f in os.listdir(IMPORT_DIR) if f.endswith('.txt')]
                 if not txt_files:
                     print(f"\n{C_YELLOW}[!] В папке '{IMPORT_DIR}' нет текстовых файлов.{C_RESET}")
                     print(f"{C_GRAY}Закиньте туда .txt файлы с чатами и возвращайтесь.{C_RESET}")
                 else:
-                    print(f"\n{C_ICE}📂 Доступные TXT базы в папке '{IMPORT_DIR}':{C_RESET}")
+                    print(f"\n{C_ICE}Доступные TXT базы в папке '{IMPORT_DIR}':{C_RESET}")
                     for i, file_name in enumerate(txt_files, 1):
                         print(f" {C_BOLD}[{i}]{C_RESET} {file_name}")
-                    
+
                     f_choice = (await ainput(f"\n{C_BOLD}Введите номер нужного файла {C_GRAY}[0 - Отмена]{C_RESET}: ")).strip()
-                    if f_choice == "0": continue
-                    
+                    if f_choice == "0":
+                        continue
+
                     if f_choice.isdigit() and 1 <= int(f_choice) <= len(txt_files):
-                        selected_file = txt_files[int(f_choice)-1]
+                        selected_file = txt_files[int(f_choice) - 1]
                         filepath = os.path.join(IMPORT_DIR, selected_file)
-                        
+
                         with open(filepath, 'r', encoding='utf-8') as f:
                             content = f.read()
-                        
+
                         items = re.split(r'[\s\n]+', content.strip())
                         for item in items:
                             c, t = parse_single_target(item)
-                            if c: targets_to_add.append((c, t))
-                        print(f"\n{C_GREEN}✅ База '{selected_file}' прочитана! Найдено чатов: {len(targets_to_add)}{C_RESET}")
+                            if c:
+                                targets_to_add.append((c, t))
+                        print(f"\n{C_GREEN}База '{selected_file}' прочитана! Найдено чатов: {len(targets_to_add)}{C_RESET}")
                     else:
                         print(f"\n{C_RED}[!] Неверный выбор.{C_RESET}")
-            
+
             if targets_to_add:
                 print(f"\n{C_ICE}--- НАСТРОЙКА КАТЕГОРИИ И ЗАДЕРЖКИ ---{C_RESET}")
                 cat = (await ainput(f"{C_BOLD}Введите название категории{C_RESET} {C_GRAY}(Enter - 'Основная', 0 - Отмена):{C_RESET} ")).strip()
-                if cat == "0": continue
-                if not cat: cat = "Основная"
-                
+                if cat == "0":
+                    continue
+                if not cat:
+                    cat = "Основная"
+
                 delay_m = (await ainput(f"{C_BOLD}Интервал рассылки для этой категории (в минутах){C_RESET} {C_GRAY}(Enter - 15 мин, 0 - Отмена):{C_RESET} ")).strip()
-                if delay_m == "0": continue
-                
+                if delay_m == "0":
+                    continue
+
                 delay_s = int(delay_m) * 60 if delay_m.isdigit() and int(delay_m) > 0 else 900
-                
+
                 with sqlite3.connect(DB_FILE) as conn:
                     for c, t in targets_to_add:
                         conn.cursor().execute(
-                            "INSERT INTO targets (chat_entity, topic_id, category, delay_sec) VALUES (?, ?, ?, ?)", 
+                            "INSERT INTO targets (chat_entity, topic_id, category, delay_sec) VALUES (?, ?, ?, ?)",
                             (c, t, cat, delay_s)
                         )
                     conn.commit()
-                print(f"\n{C_GREEN}✅ Успешно добавлено {len(targets_to_add)} чат(ов) в категорию '{cat}' с задержкой {delay_m or 15} мин.!{C_RESET}")
-            
+                print(f"\n{C_GREEN}Успешно добавлено {len(targets_to_add)} чат(ов) в категорию '{cat}' с задержкой {delay_s // 60} мин.!{C_RESET}")
+
             await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
 
         elif choice == "4":
@@ -605,111 +745,127 @@ async def console_menu(client: TelegramClient, email: str, pass_hash: str):
             print(f"{C_ICE}{C_BOLD}=== СПИСОК ДОБАВЛЕННЫХ ЧАТОВ ==={C_RESET}\n")
             with sqlite3.connect(DB_FILE) as conn:
                 rows = conn.cursor().execute("SELECT id, chat_entity, topic_id, category, delay_sec FROM targets").fetchall()
-            
+
             if not rows:
                 print(f"{C_YELLOW}База чатов пуста.{C_RESET}")
             else:
                 for r_id, c_ent, t_id, cat, d_sec in rows:
                     t_str = f" (Ветка: {t_id})" if t_id else ""
-                    print(f"[{C_BOLD}ID: {r_id}{C_RESET}] {c_ent}{t_str} | Кат: {C_ICE}{cat}{C_RESET} | Задержка: {d_sec//60} мин.")
-            
+                    print(f"[{C_BOLD}ID: {r_id}{C_RESET}] {c_ent}{t_str} | Кат: {C_ICE}{cat}{C_RESET} | Задержка: {d_sec // 60} мин.")
+
             print(f"\n{C_GRAY}Подсказка: Введите 'all' чтобы очистить всю базу разом.{C_RESET}")
             del_id = (await ainput(f"{C_BOLD}Введите ID для удаления{C_RESET} {C_GRAY}(Enter или 0 - Назад):{C_RESET} ")).strip().lower()
-            
-            if del_id in ["0", ""]: 
+
+            if del_id in ["0", ""]:
                 continue
-                
+
             if del_id == 'all':
                 with sqlite3.connect(DB_FILE) as conn:
                     conn.cursor().execute("DELETE FROM targets")
                     conn.commit()
-                print(f"\n{C_GREEN}✅ Вся база чатов успешно очищена.{C_RESET}")
+                print(f"\n{C_GREEN}Вся база чатов успешно очищена.{C_RESET}")
             elif del_id.isdigit():
                 with sqlite3.connect(DB_FILE) as conn:
                     conn.cursor().execute("DELETE FROM targets WHERE id = ?", (int(del_id),))
                     conn.commit()
-                print(f"\n{C_GREEN}✅ Чат успешно удален.{C_RESET}")
+                print(f"\n{C_GREEN}Чат успешно удален.{C_RESET}")
             await ainput(f"\n{C_GRAY}Нажмите Enter...{C_RESET}")
 
         elif choice == "5":
             clear_screen()
             print(f"{C_ICE}{C_BOLD}=== УПРАВЛЕНИЕ КАТЕГОРИЯМИ И ТАЙМЕРАМИ ==={C_RESET}\n")
-            
+
             with sqlite3.connect(DB_FILE) as conn:
                 categories = conn.cursor().execute("SELECT DISTINCT category, delay_sec FROM targets").fetchall()
-            
+
             if not categories:
                 print(f"{C_YELLOW}В базе пока нет ни одной категории с чатами.{C_RESET}")
             else:
                 print(f" {C_BOLD}Текущие категории в базе:{C_RESET}")
                 for i, (cat, d_sec) in enumerate(categories, 1):
-                    print(f" [{i}] Категория: {C_ICE}{cat}{C_RESET} | Задержка: {C_BOLD}{d_sec//60} мин.{C_RESET}")
-                
+                    print(f" [{i}] Категория: {C_ICE}{cat}{C_RESET} | Задержка: {C_BOLD}{d_sec // 60} мин.{C_RESET}")
+
                 print(f"\n{C_GRAY}Вы можете изменить задержку для конкретной категории.{C_RESET}")
                 cat_choice = (await ainput(f"Введите номер категории для изменения {C_GRAY}[0 - Назад]:{C_RESET} ")).strip()
-                if cat_choice == "0" or not cat_choice: continue
-                
+                if cat_choice == "0" or not cat_choice:
+                    continue
+
                 if cat_choice.isdigit() and 1 <= int(cat_choice) <= len(categories):
-                    target_cat = categories[int(cat_choice)-1][0]
+                    target_cat = categories[int(cat_choice) - 1][0]
                     new_m = (await ainput(f"Введите новый интервал в минутах для категории '{target_cat}' {C_GRAY}[0 - Отмена]:{C_RESET} ")).strip()
-                    if new_m == "0": continue
-                    
+                    if new_m == "0":
+                        continue
+
                     if new_m.isdigit() and int(new_m) > 0:
                         new_sec = int(new_m) * 60
                         with sqlite3.connect(DB_FILE) as conn:
                             conn.cursor().execute("UPDATE targets SET delay_sec = ? WHERE category = ?", (new_sec, target_cat))
                             conn.commit()
-                        print(f"\n{C_GREEN}✅ Задержка для категории '{target_cat}' успешно обновлена на {new_m} мин.!{C_RESET}")
+                        print(f"\n{C_GREEN}Задержка для категории '{target_cat}' успешно обновлена на {new_m} мин.!{C_RESET}")
                     else:
                         print(f"\n{C_RED}[!] Неверное значение минут.{C_RESET}")
                 else:
                     print(f"\n{C_RED}[!] Неверный выбор категории.{C_RESET}")
-            
+
             await ainput(f"\n{C_GRAY}Нажмите Enter для возврата...{C_RESET}")
+
 
 async def main():
     email, pass_hash = await ensure_authenticated()
 
-    api_id = get_setting("api_id")
-    api_hash = get_setting("api_hash")
+    api_id = get_setting("api_id", "").strip()
+    api_hash = get_setting("api_hash", "").strip()
 
-    if not api_id or not api_hash:
+    while not api_id.isdigit() or not api_hash:
+        if api_id and not api_id.isdigit():
+            print(f"\n{C_RED}[!] Сохранённый API_ID некорректен (должны быть только цифры). Введите заново.{C_RESET}")
+            set_setting("api_id", "")
+            set_setting("api_hash", "")
+            await asyncio.sleep(1.5)
+
         clear_screen()
         print(f"{C_ICE}{C_BOLD}=== ПЕРВИЧНАЯ НАСТРОЙКА TELEGRAM API ==={C_RESET}")
-        print(f"{C_GRAY}Ключи получаются один раз на официальном сайте: https://my.telegram.org{C_RESET}\n")
-        api_id = input("Введите ваш API_ID: ").strip()
-        api_hash = input("Введите ваш API_HASH: ").strip()
+        print(f"{C_GRAY}Ключи получаются один раз на официальном сайте: https://my.telegram.org{C_RESET}")
+        print(f"{C_YELLOW}Внимание: сюда вводится НЕ ключ лицензии, а API_ID (цифры) и API_HASH!{C_RESET}\n")
+        api_id = (await ainput("Введите ваш API_ID (только цифры): ")).strip()
+        api_hash = (await ainput("Введите ваш API_HASH: ")).strip()
+
+        if not api_id.isdigit() or not api_hash:
+            print(f"\n{C_RED}[!] API_ID должен состоять только из цифр, а API_HASH не может быть пустым.{C_RESET}")
+            await ainput(f"{C_GRAY}Нажмите Enter, чтобы попробовать снова...{C_RESET}")
+            continue
+
         set_setting("api_id", api_id)
         set_setting("api_hash", api_hash)
 
     client = TelegramClient(
-        SESSION_FILE, 
-        int(api_id), 
+        SESSION_FILE,
+        int(api_id),
         api_hash,
         device_model="Desktop PC",
         system_version="Windows 11 Pro",
         app_version="4.16.8 x64",
         lang_code="ru"
     )
-    
+
     print(f"\n{C_ICE}Подключение IcePulse к серверам Telegram...{C_RESET}")
     await client.connect()
-    
+
     if not await client.is_user_authorized():
         clear_screen()
         print(f"{C_ICE}{C_BOLD}=== АВТОРИЗАЦИЯ TELEGRAM ЧЕРЕЗ QR-КОД ==={C_RESET}")
         print(f"{C_YELLOW}Откройте Telegram на телефоне -> Настройки -> Устройства -> Подключить устройство{C_RESET}\n")
-        
+
         try:
             qr = await client.qr_login()
             while not await client.is_user_authorized():
                 qr_term = qrcode.QRCode()
                 qr_term.add_data(qr.url)
                 qr_term.make(fit=True)
-                
+
                 print(f"\n{C_BOLD}Отсканируйте этот QR-код камерой телефона:{C_RESET}")
                 qr_term.print_ascii(invert=True)
-                
+
                 print(f"\n{C_GRAY}(Ожидание сканирования... Обновление QR-кода через 15 секунд){C_RESET}")
                 try:
                     await qr.wait(15)
@@ -717,42 +873,46 @@ async def main():
                     qr = await client.recreate_qr()
                     clear_screen()
                     print(f"{C_YELLOW}[!] Срок старого QR-кода истек, сканируйте новый:{C_RESET}")
-            
-            print(f"\n{C_GREEN}✅ Успешная авторизация в Telegram через QR-код!{C_RESET}")
-            
+
+            print(f"\n{C_GREEN}Успешная авторизация в Telegram через QR-код!{C_RESET}")
+
         except SessionPasswordNeededError:
             print(f"\n{C_YELLOW}[!] На аккаунте включена двухэтапная аутентификация (Облачный пароль).{C_RESET}")
             password = await ainput(f"Введите пароль от аккаунта Telegram {C_GRAY}[0 - Отмена]{C_RESET}: ")
-            if password.strip() == "0": sys.exit(0)
+            if password.strip() == "0":
+                sys.exit(0)
             await client.sign_in(password=password.strip())
-            print(f"\n{C_GREEN}✅ Успешный вход по облачному паролю!{C_RESET}")
-            
+            print(f"\n{C_GREEN}Успешный вход по облачному паролю!{C_RESET}")
+
         except Exception as e:
-            print(f"\n{C_RED}❌ Возникла ошибка при входе по QR-коду: {e}{C_RESET}")
+            print(f"\n{C_RED}Возникла ошибка при входе по QR-коду: {e}{C_RESET}")
             phone = await ainput(f"\n{C_BOLD}Давайте войдем по номеру.{C_RESET} Введите номер телефона (+380...) {C_GRAY}[0 - Отмена]{C_RESET}: ")
-            if phone.strip() == "0": sys.exit(0)
+            if phone.strip() == "0":
+                sys.exit(0)
             await client.send_code_request(phone.strip())
             code = await ainput(f"Введите код подтверждения из Telegram {C_GRAY}[0 - Отмена]{C_RESET}: ")
-            if code.strip() == "0": sys.exit(0)
+            if code.strip() == "0":
+                sys.exit(0)
             await client.sign_in(phone.strip(), code.strip())
-            print(f"\n{C_GREEN}✅ Успешно авторизовано!{C_RESET}")
+            print(f"\n{C_GREEN}Успешно авторизовано!{C_RESET}")
 
     await console_menu(client, email, pass_hash)
     await client.disconnect()
+
 
 if __name__ == "__main__":
     os.system("")
     if os.name == "nt":
         os.system("title IcePulse - Telegram Auto-Poster")
-        
+
     init_db()
     check_for_updates()
-    
+
     try:
         asyncio.run(main())
-    except Exception as e:
+    except Exception:
         import traceback
-        print(f"\nКритическая ошибка:")
+        print("\nКритическая ошибка:")
         traceback.print_exc()
     finally:
         input("\nНажмите Enter для выхода...")
